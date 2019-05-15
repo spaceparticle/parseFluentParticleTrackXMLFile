@@ -79,8 +79,8 @@ def getParDataByParamName(secDatas, DF_secDatas, paramname, datalength, unit='')
     return elmnt_data, data_conv
     
 #%% -------------- read the XML file and parse information of elements of "Items" and "Section" ----------------------
-XML_FILE = 'pars_a.xml'#'pars_a.xml' #'en1.xml'
-lTransient = True # in Transient simulations, particles' data are output (in the src .xml file) at discrete "time moments", while in Steady cases, particles' data are evolved over time.
+XML_FILE = 'en1.xml' #'pars_a.xml' #'en1.xml'
+lTransient = False # in Transient simulations, particles' data are output (in the src .xml file) at discrete "time moments", while in Steady cases, particles' data are evolved over time.
 # ... 
 DT = xml.dom.minidom.parse(XML_FILE)
 Con = DT.documentElement
