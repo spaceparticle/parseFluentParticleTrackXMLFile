@@ -12,8 +12,27 @@ from pandas import DataFrame
 from pandas import Series
 import base64
 import struct
-#import time
-
+import time
+import logging
+import os
+#
+logger = logging.getLogger("main")
+logger.handlers = []
+logging.basicConfig(level = logging.INFO)
+#logger.setLevel(level = logging.INFO)
+filehandler = logging.FileHandler("log.txt")
+filehandler.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+filehandler.setFormatter(formatter)
+#
+#console = logging.StreamHandler() # print on screen
+#console.setLevel(logging.DEBUG)
+#
+logger.addHandler(filehandler)
+#logger.addHandler(console)
+#
+#logger.info("this is info")#logger.debug("this is debug")#logger.warning("this is warning")#logger.error("this error")#logger.critical("this is critical")
+#
 def convBase64LEToFloat(encoded):
 #    encoded = 'pC/TNplSEDlD0II5+nyPOR0doDnZ6tU5FX38OUawDTrQ5iM6o+kvOg6qNzofo1E6OKRtOvnfcjq133s6TtCJOlY8kDos9Zk6MI9VNj/lgzimGhc5ayKDOfvhkjm7H545wlHZOQ==' # gliu: particle time
     # decode the string
@@ -78,155 +97,152 @@ def getParDataByParamName(secDatas, DF_secDatas, paramname, datalength, unit='')
     assert len(data_conv) == datalength or len(data_conv) == 1, 'Error!, length does not match ' + paramname + ',' + str(len(data_conv)) + ',' + str(datalength)
 #    print '\n', paramname, '\n', data_conv
     return elmnt_data, data_conv
+
+def parseAFile(XML_FILE='pars.xml', zones_key=None, zones_xbound=None, flu_niu=None, ldbg=False):
+    #%% -------------- read the XML file and parse information of elements of "Items" and "Section" ----------------------
+    #'pars_a.xml' #'en1.xml'
+    print '========= parsing file: {} ============='.format(XML_FILE) 
+    logger.info('========= parsing file: {} ============='.format(XML_FILE))
+    DT = xml.dom.minidom.parse(XML_FILE)
+    Con = DT.documentElement
+    #
+    ptItems = Con.getElementsByTagName("Item")
+    ptSections = Con.getElementsByTagName("Section")
+    #
+    ptItemClmns = ['id', 'name', 'type', 'units']
+    ptSecClmns = ['id', 'length']
+    #
+    DF_Items = getElmntInfoInDF(ptItems, ptItemClmns)  
+    DF_Items['id'] = DF_Items['id'].values.astype(np.int)
+    DF_Items.set_index('id', drop=True, inplace=True)
+    if ldbg: print 'DF_Items:\n', DF_Items, '\n', DF_Items.index
     
-#%% -------------- read the XML file and parse information of elements of "Items" and "Section" ----------------------
-XML_FILE = 'pars.xml' #'pars_a.xml' #'en1.xml'
-lTransient = True # in Transient simulations, particles' data are output (in the src .xml file) at discrete "time moments", while in Steady cases, particles' data are evolved over time.
-# ... 
-DT = xml.dom.minidom.parse(XML_FILE)
-Con = DT.documentElement
-#
-ptItems = Con.getElementsByTagName("Item")
-ptSections = Con.getElementsByTagName("Section")
-#
-ptItemClmns = ['id', 'name', 'type', 'units']
-ptSecClmns = ['id', 'length']
-#
-DF_Items = getElmntInfoInDF(ptItems, ptItemClmns)  
-DF_Items['id'] = DF_Items['id'].values.astype(np.int)
-DF_Items.set_index('id', drop=True, inplace=True)
-print 'DF_Items:\n', DF_Items, '\n', DF_Items.index
-
-DF_Sections = getElmntInfoInDF(ptSections, ptSecClmns)  
-DF_Sections.set_index('id', drop=True, inplace=True)
-print 'DF_Sections:\n', DF_Sections, '\n', DF_Sections.index
-#%% ---------------- read, parse and store data for each particle-------------------------
-"""
-DF structure for record of a specific particle:
-        xpos ypos zpos vel parRe
-time
-
-The overall DF for all particles should be Three-dimensional. 
-BUT as DF is 2D, I decide to use a Series, values of which are list of DFs, 
-indexes of which are particles' id.
-"""
-pars = Series([]) # DO NOT use this: 'pars = Series()'
-pardiams = Series([])
-ptSecDataClmns = ['item', 'dataFormat']
-#
-cylD_default = 0.02
-cylD = float(raw_input('Please input the value of the cylinder diameter, unit is m, default is {}:  '.format(cylD_default)) or cylD_default)
-print 'cylD is set to: {} (m)'.format(cylD)
-#
-partimes = np.array([], dtype=np.float)
-for i, ptSec in enumerate(ptSections):
-    print 'Now Sec #:', i
-    datalength = int(ptSec.getAttribute('length'))
-    secDatas = ptSec.getElementsByTagName('Data')
-    DF_secDatas = getElmntInfoInDF(secDatas, ptSecDataClmns)
-    _, partime = getParDataByParamName(secDatas, DF_Items, 'Particle Time', datalength, unit='s')
-    _, zpars = getParDataByParamName(secDatas, DF_Items, 'Particle Z Position', datalength, unit='m')    
-    print partime, len(partime)    
-    partimes = np.append(partimes, partime)
-    assert len(zpars) == 1, 'Error, the program currently only support 2D problems, i.e. len(zpars) should be exactly 1'
-
-# DO NOT modify (like 'sort') the orders of 'partimes'
-print partimes, len(partimes) 
-partimes_unique = np.unique(partimes)        
-zones_xbound = {'0_5D':[0.0, 5.0], '5_10D':[5.0, 10.0], '10_15D':[10.0, 15.0], '15_20D':[15.0, 20.0], '20_30D':[20.0, 30.0]}
-time_round_decimals = 5
-par_statistics = DataFrame(index=pd.MultiIndex.from_product([zones_xbound.keys(), [str(round(s,time_round_decimals)) \
-                                                             for s in partimes_unique]], names=['time','zone']) , \
-                           columns=['NPars', 'Res_mean', 'Res_min', 'Res_max', 'xmin', 'xmax', 'xmean', 'ymin', 'ymax', 'ymean', 'velmin', 'velmax', 'velmean'])
-for ptime_unq in partimes_unique:
-    print 'working on t = {} s'.format(ptime_unq)
-    idx_Secs = list(np.where(partimes == ptime_unq)[0])
-#    print idx
-    parids_s = np.array([], dtype=np.float)
-    xpars_s = np.array([], dtype=np.float)
-    ypars_s = np.array([], dtype=np.float)
-    pardps_s = np.array([], dtype=np.float)
-    parvels_s = np.array([], dtype=np.float)
-    parRes_s = np.array([], dtype=np.float)
-    for iSec in idx_Secs:
-        print 'Now Sec #:', iSec
-        ptSec = ptSections[iSec]
+    DF_Sections = getElmntInfoInDF(ptSections, ptSecClmns)  
+    DF_Sections.set_index('id', drop=True, inplace=True)
+    if ldbg: print 'DF_Sections:\n', DF_Sections, '\n', DF_Sections.index
+    #%% ---------------- read, parse and store data for each particle-------------------------
+#    pars = Series([]) # DO NOT use this: 'pars = Series()'
+#    ptSecDataClmns = ['item', 'dataFormat']
+    #
+    cylD_default = 0.02
+    cylD = float(raw_input('Please input the value of the cylinder diameter, unit is m, default is {}:  '.format(cylD_default)) or cylD_default)
+    print 'cylD is set to: {} (m)'.format(cylD)
+    logger.info('cylD is set to: {} (m)'.format(cylD))
+    #
+    print 'collecting information of time moments (partimes) and particle sizes (parsizes)...'
+    parsizes = np.array([], dtype=np.float)
+    partimes = np.array([], dtype=np.float)
+    for i, ptSec in enumerate(ptSections):
+#        print 'Now Sec #:', i
         datalength = int(ptSec.getAttribute('length'))
         secDatas = ptSec.getElementsByTagName('Data')
-        DF_secDatas = getElmntInfoInDF(secDatas, ptSecDataClmns)
-        _, parids = getParDataByParamName(secDatas, DF_Items, 'Particle ID', datalength)
+#        DF_secDatas = getElmntInfoInDF(secDatas, ptSecDataClmns)
         _, partime = getParDataByParamName(secDatas, DF_Items, 'Particle Time', datalength, unit='s')
-        _, xpars = getParDataByParamName(secDatas, DF_Items, 'Particle X Position', datalength, unit='m')
-        _, ypars = getParDataByParamName(secDatas, DF_Items, 'Particle Y Position', datalength, unit='m')
-        _, zpars = getParDataByParamName(secDatas, DF_Items, 'Particle Z Position', datalength, unit='m')
-        _, pardps = getParDataByParamName(secDatas, DF_Items, 'Particle Diameter', datalength, unit='m')
-        _, parvels = getParDataByParamName(secDatas, DF_Items, 'Particle Velocity Magnitude', datalength, unit='m s^-1')
-        _, parRes = getParDataByParamName(secDatas, DF_Items, 'Particle Reynolds Number', datalength)    
+        _, parsize= getParDataByParamName(secDatas, DF_Items, 'Particle Diameter', datalength, unit='m')
+        _, zpars = getParDataByParamName(secDatas, DF_Items, 'Particle Z Position', datalength, unit='m')    
+#        print partime, len(partime)    
+#        print parsize, len(parsize)    
+        partimes = np.append(partimes, partime)
+        parsizes = np.append(parsizes, parsize)
+        assert len(zpars) == 1, 'Error, the program currently only support 2D problems, i.e. len(zpars) should be exactly 1'
+    
+    # DO NOT modify (like 'sort') the orders of 'partimes'    
+    print '---'
+#    print partimes, len(partimes) 
+    #print parsizes, len(parsizes) 
+    assert len(np.unique(parsizes)) == 1, 'Error, particles having more than 1 size---Not supported by this program'
+    #time.sleep(10)
+    partimes_unique = np.unique(partimes)        
+#    zones_xbound = {'0_5D':[0.0, 5.0], '5_10D':[5.0, 10.0], '10_15D':[10.0, 15.0], '15_20D':[15.0, 20.0], '20_30D':[20.0, 30.0]}
+    time_round_decimals = 5
+    parsize_round_decimals = 2
+    parsizes = [round(x*1.e6, parsize_round_decimals)/1.e6 for x in parsizes]
+    par_stats = DataFrame(index=pd.MultiIndex.from_product([zones_xbound.keys(), [str(round(s,time_round_decimals)) \
+                                                                 for s in partimes_unique]], names=['zone','time']) , \
+                               columns=['NPars', 'Res_mean', 'Res_min', 'Res_max', 'xmin', 'xmax', 'xmean', 'ymin', 'ymax', 'ymean', 'velmin', 'velmax', 'velmean'])
+    for ptime_unq in partimes_unique:
+        print 'working on t = {} s'.format(ptime_unq)
+        idx_Secs = list(np.where(partimes == ptime_unq)[0])
+    #    print idx
+        parids_s = np.array([], dtype=np.float)
+        xpars_s = np.array([], dtype=np.float)
+        ypars_s = np.array([], dtype=np.float)
+        pardps_s = np.array([], dtype=np.float)
+        parvels_s = np.array([], dtype=np.float)
+        parRes_s = np.array([], dtype=np.float)
+        for iSec in idx_Secs:
+            if ldbg: print 'Now Sec #:', iSec
+            ptSec = ptSections[iSec]
+            datalength = int(ptSec.getAttribute('length'))
+            secDatas = ptSec.getElementsByTagName('Data')
+#            DF_secDatas = getElmntInfoInDF(secDatas, ptSecDataClmns)
+            _, parids = getParDataByParamName(secDatas, DF_Items, 'Particle ID', datalength)
+            _, partime = getParDataByParamName(secDatas, DF_Items, 'Particle Time', datalength, unit='s')
+            _, xpars = getParDataByParamName(secDatas, DF_Items, 'Particle X Position', datalength, unit='m')
+            _, ypars = getParDataByParamName(secDatas, DF_Items, 'Particle Y Position', datalength, unit='m')
+            _, zpars = getParDataByParamName(secDatas, DF_Items, 'Particle Z Position', datalength, unit='m')
+            _, pardps = getParDataByParamName(secDatas, DF_Items, 'Particle Diameter', datalength, unit='m')
+            _, parvels = getParDataByParamName(secDatas, DF_Items, 'Particle Velocity Magnitude', datalength, unit='m s^-1')
+            _, parRes = getParDataByParamName(secDatas, DF_Items, 'Particle Reynolds Number', datalength)    
+        #    
+            assert len(partime) == 1 and partime[0] == ptime_unq, 'length != 1 or partime inconsistent'
+            assert len(parids) == len(np.unique(parids)), 'parids Not unique'
+            parids_s = np.append(parids_s, parids)
+            xpars_s = np.append(xpars_s, xpars)
+            ypars_s = np.append(ypars_s, ypars)
+            pardps_s = np.append(pardps_s, pardps)
+            parvels_s = np.append(parvels_s, parvels)
+            parRes_s = np.append(parRes_s, parRes)
+        pt = str(round(ptime_unq,time_round_decimals))
+        for zone_key in zones_xbound.keys():        
+            ids = (xpars_s >= zones_xbound[zone_key][0]*cylD) & (xpars_s < zones_xbound[zone_key][1]*cylD)
+            par_stats.loc[(zone_key, pt)]['NPars'] = len(parids_s[ids])
+            par_stats.loc[(zone_key, pt)]['Res_mean','Res_min','Res_max'] = [np.mean(parRes_s[ids]), np.min(parRes_s[ids]), np.max(parRes_s[ids])]
+            par_stats.loc[(zone_key, pt)]['xmin','xmax','xmean'] = [np.min(xpars_s[ids]), np.max(xpars_s[ids]), np.mean(xpars_s[ids])]
+            par_stats.loc[(zone_key, pt)]['ymin','ymax','ymean'] = [np.min(ypars_s[ids]), np.max(ypars_s[ids]), np.mean(ypars_s[ids])]
+            par_stats.loc[(zone_key, pt)]['velmin','velmax','velmean'] = [np.min(parvels_s[ids]), np.max(parvels_s[ids]), np.mean(parvels_s[ids])]
+    #        
+    logger.info('par_stats: \n {}'.format(par_stats))
+    assert len(np.unique(pardps_s)) == 1, 'Error, particles diameter is not unique ---Not supported by this program'
+    par_diam = pardps_s[0]
     #    
-        assert len(partime) == 1 and partime[0] == ptime_unq, 'length != 1 or partime inconsistent'
-        assert len(parids) == len(np.unique(parids)), 'parids Not unique'
-        parids_s = np.append(parids_s, parids)
-        xpars_s = np.append(xpars_s, xpars)
-        ypars_s = np.append(ypars_s, ypars)
-        pardps_s = np.append(pardps_s, pardps)
-        parvels_s = np.append(parvels_s, parvels)
-        parRes_s = np.append(parRes_s, parRes)
-    pt = str(round(ptime_unq,time_round_decimals))
-    for zone_key in zones_xbound.keys():        
-        ids = (xpars_s >= zones_xbound[zone_key][0]*cylD) & (xpars_s < zones_xbound[zone_key][1]*cylD)
-        par_statistics.loc[(zone_key, pt)]['NPars'] = len(parids_s[ids])
-        par_statistics.loc[(zone_key, pt)]['Res_mean','Res_min','Res_max'] = [np.mean(parRes_s[ids]), np.min(parRes_s[ids]), np.max(parRes_s[ids])]
-        par_statistics.loc[(zone_key, pt)]['xmin','xmax','xmean'] = [np.min(xpars_s[ids]), np.max(xpars_s[ids]), np.mean(xpars_s[ids])]
-        par_statistics.loc[(zone_key, pt)]['ymin','ymax','ymean'] = [np.min(ypars_s[ids]), np.max(ypars_s[ids]), np.mean(ypars_s[ids])]
-        par_statistics.loc[(zone_key, pt)]['velmin','velmax','velmean'] = [np.min(parvels_s[ids]), np.max(parvels_s[ids]), np.mean(parvels_s[ids])]
-    ps = par_statistics
-#    break
-# making average of each zone over different time moments
-Res_stat = DataFrame(index=zones_xbound.keys(), columns=['mean', 'rel_std'])
-for zone_key in zones_xbound.keys(): 
-    Res_stat.loc[zone_key]['mean', 'rel_std'] = [np.mean(ps.loc[zone_key]['Res_mean']), np.std(ps.loc[zone_key]['Res_mean']) / np.mean(ps.loc[zone_key]['Res_mean'])]
+    print 'making statistics of particle Re...'
+    # making average of each zone over different time moments
+    Res_stats = DataFrame(index=zones_xbound.keys(), columns=['mean', 'rel_std'])
+    for zone_key in zones_xbound.keys(): 
+        Res_stats.loc[zone_key]['mean', 'rel_std'] = [np.mean(par_stats.loc[zone_key]['Res_mean']), np.std(par_stats.loc[zone_key]['Res_mean']) / np.mean(par_stats.loc[zone_key]['Res_mean'])]
+    #    
+    Res_stats = Res_stats.reindex(zones_key)
+    if np.max(Res_stats['rel_std']) > 0.03:
+        print 'Warning: relative std of Res over different time moments is too big as {}'.format(np.max(Res_stats['rel_std']))
+    print '--> Res_stats: \n', Res_stats
+    logger.info('Res_stats: \n {}'.format(Res_stats))
+    rel_vel = Res_stats['mean'] * flu_niu / par_diam
+    rel_vel = rel_vel.reindex(zones_key)
+    print '\n--> relative velocity are: \n', rel_vel    
+    logger.info('rel_vel: \n {}'.format(rel_vel))
 #    
-if np.max(Res_stat['rel_std']) > 0.03:
-    print 'Warning: relative std of Res over different time moments is too big as {}'.format(np.max(Res_stat['rel_std']))
-        
+    print '> Done of {}'.format(XML_FILE)
+
+    
+if __name__ == '__main__':
+    zones_key = ['0_5D','5_10D','10_15D','15_20D','20_30D']
+    zones_xbound = {'0_5D':[0.0, 5.0], '5_10D':[5.0, 10.0], '10_15D':[10.0, 15.0], '15_20D':[15.0, 20.0], '20_30D':[20.0, 30.0]}
+    assert sorted(zones_key) == sorted(zones_xbound.keys()), 'Error, keys of zones_xbound do not match zones_key'
+    XML_File_Dir = './2D_x24D_Standard'
+    if XML_File_Dir:
+        XML_Files = []
+        for fl in os.listdir(XML_File_Dir):
+            if fl and fl[-4:] == '.xml':
+                XML_Files.append(XML_File_Dir + '/' + fl)
+    else:
+        XML_Files = ['par_1.67um.xml',] #, par_5um.xml', 'par_50um.xml')
+    logger.info('>>> pwd is: {0}, files to parse: {1}'.format(os.path.dirname(os.path.realpath(__file__)), XML_Files))
+    for xml_file in XML_Files:
+        parseAFile(XML_FILE=xml_file, zones_key=zones_key, zones_xbound=zones_xbound, flu_niu=1.5e-5) 
+#    
 #_ = raw_input("Paused, press ENTER to continue...")
 #time.sleep(5)
-#
-#for i, ptSec in enumerate(ptSections):
-#    print 'Now Sec #:', i
-#    datalength = int(ptSec.getAttribute('length'))
-#    secDatas = ptSec.getElementsByTagName('Data')
-#    DF_secDatas = getElmntInfoInDF(secDatas, ptSecDataClmns)
-#    _, parids = getParDataByParamName(secDatas, DF_Items, 'Particle ID', datalength)
-#    _, partimes = getParDataByParamName(secDatas, DF_Items, 'Particle Time', datalength, unit='s')
-#    _, xpars = getParDataByParamName(secDatas, DF_Items, 'Particle X Position', datalength, unit='m')
-#    _, ypars = getParDataByParamName(secDatas, DF_Items, 'Particle Y Position', datalength, unit='m')
-#    _, zpars = getParDataByParamName(secDatas, DF_Items, 'Particle Z Position', datalength, unit='m')
-#    _, pardps = getParDataByParamName(secDatas, DF_Items, 'Particle Diameter', datalength, unit='m')
-#    _, parvels = getParDataByParamName(secDatas, DF_Items, 'Particle Velocity Magnitude', datalength, unit='m s^-1')
-#    _, parRes = getParDataByParamName(secDatas, DF_Items, 'Particle Reynolds Number', datalength)    
-##    
-#    assert len(zpars) == 1, 'Error, the program currently only support 2D problems, i.e. len(zpars) should be exactly 1'
-#    if len(pardps) == 1:
-#        pardps = np.ones((datalength,)) * pardps[0]
-#    if lTransient and len(partimes) == 1:
-#        partimes= np.ones((datalength,)) * partimes[0]
-#    if len(parids) == 1:
-#        parids = np.ones((datalength,), dtype=np.int) * parids[0]
-##    
-#    for ipar in np.unique(parids):
-#        print 'ipar: ', ipar
-#        idx = parids==ipar
-#        pardiams[ipar] = pardps[idx][0]
-##        print 'partimes[idx]\n', partimes[idx]
-#        data = zip(partimes[idx], xpars[idx], ypars[idx], parvels[idx], parRes[idx], pardps[idx])
-#        parclmns = ['partime', 'xpar', 'ypar', 'parvel', 'parRe', 'pardp']        
-#        if not ipar in pars.index:
-#            pars[ipar] = DataFrame(columns=parclmns)  # this DOES NOT work
-#        newdf = DataFrame(data=data, columns=parclmns)
-#        pars[ipar] = pars[ipar].append(newdf, ignore_index=True) # this will work
-##    if i >= 3: break
-##        
 ##%% -----------------------group particles diameters-------------------
 #dps = np.unique(pardiams.values)
 #print 'category of particle diameters: \n', dps
