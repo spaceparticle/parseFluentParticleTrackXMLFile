@@ -1,0 +1,2 @@
+# parseFluentParticleTrackXMLFile
+Parse the .xml file recording particle history track data exported with Ansys Fluent using Python 2.7. Particle-wise data such as particle velocity, particle Reynolds number are extracted from the xml file, upon which one can do further statistics. Supporting output files of both steady and transient CFD simulation cases, of which the xml files have different structures. Currently only support output of 2D CFD simulations, but one may extend to 3D easily.
